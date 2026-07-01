@@ -3,7 +3,7 @@ import google.generativeai as genai
 import PIL.Image
 
 st.set_page_config(page_title="An Tam Blinds Admin", layout="centered")
-st.title("🛠 An Tam Blinds App (Định dạng .l.kc)")
+st.title("🛠 An Tam Blinds App (Stable Version)")
 
 st.sidebar.header("Cài đặt")
 api_key = st.sidebar.text_input("Dán Google API Key vào đây:", type="password")
@@ -13,39 +13,43 @@ if not api_key:
 else:
     try:
         genai.configure(api_key=api_key)
-        # Tự động chọn model
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = 'models/gemini-1.5-flash'
-        if 'models/gemini-1.5-flash' in available_models: model_name = 'models/gemini-1.5-flash'
         
-        model = genai.GenerativeModel(model_name)
-        st.sidebar.success(f"App đã sẵn sàng!")
+        # Tự động tìm bộ não nào đang mở trong tài khoản của ông
+        model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Ưu tiên các dòng máy mạnh, nếu không có cái nào thì báo lỗi rõ ràng
+        if 'models/gemini-1.5-flash' in model_list:
+            model_name = 'models/gemini-1.5-flash'
+        elif 'models/gemini-pro-vision' in model_list:
+            model_name = 'models/gemini-pro-vision'
+        elif 'models/gemini-1.5-pro' in model_list:
+            model_name = 'models/gemini-1.5-pro'
+        else:
+            model_name = model_list[0] if model_list else None
 
-        uploaded_file = st.camera_input("Chụp ảnh sổ đo công trình")
+        if model_name:
+            model = genai.GenerativeModel(model_name)
+            st.sidebar.success(f"Đang dùng: {model_name}")
+            
+            uploaded_file = st.camera_input("Chụp ảnh sổ đo công trình")
 
-        if uploaded_file:
-            with st.spinner('Đang tạo định dạng .l.kc cho Jimmy...'):
-                image = PIL.Image.open(uploaded_file)
-                
-                # Lệnh ép AI xuất đúng định dạng Rộng/Cao.l.kc
-                prompt = """
-                Bạn là thư ký chuyên nghiệp của An Tam Blinds. 
-                Hãy đọc sổ đo và xuất dữ liệu theo đúng yêu cầu sau:
-                1. Địa chỉ công trình.
-                2. Kích thước PHẢI trình bày chính xác định dạng: Rộng/Cao.l.kc 
-                   (Ví dụ: Nếu sổ ghi 1525 x 1458 thì bạn phải viết là 1525/1458.l.kc)
-                3. Ghi chú thêm Hướng (L/R) và tên Vải bên cạnh.
-                
-                Kết quả trả về phải rõ ràng, ưu tiên để trong khung code để Jimmy dễ copy.
-                """
-                
-                response = model.generate_content([prompt, image])
-                
-                st.subheader("📋 KẾT QUẢ ĐƠN HÀNG (.l.kc):")
-                # Hiển thị kết quả trong khung Code để ông nhấn nút Copy cho lẹ
-                st.code(response.text, language="text")
-                
-                st.success("Đúng định dạng ông cần rồi đó Jimmy!")
+            if uploaded_file:
+                with st.spinner('Đang đọc sổ đo cho Jimmy...'):
+                    image = PIL.Image.open(uploaded_file)
+                    # Lệnh vắt kiệt AI để ra định dạng .l.kc
+                    prompt = """
+                    Bạn là trợ lý An Tam Blinds. Hãy đọc ảnh và liệt kê:
+                    1. Địa chỉ công trình.
+                    2. Kích thước trình bày CỰC KỲ CHÍNH XÁC theo dạng: Width/Height.l.kc
+                       (Ví dụ: 1235/1546.l.kc)
+                    3. Hướng L/R và Vải bên cạnh.
+                    Trả về tiếng Việt, để thông tin trong khung cho dễ copy.
+                    """
+                    response = model.generate_content([prompt, image])
+                    st.subheader("📋 KẾT QUẢ ĐƠN HÀNG (.l.kc):")
+                    st.code(response.text, language="text")
+        else:
+            st.error("Tài khoản này chưa mở bộ não AI nào. Jimmy kiểm tra lại Key nhé!")
                 
     except Exception as e:
-        st.error(f"Lỗi: {e}. Thử nhấn F5 làm mới trang nhé!")
+        st.error(f"Lỗi hệ thống: {e}. Jimmy nhấn F5 lại giúp tui!")
