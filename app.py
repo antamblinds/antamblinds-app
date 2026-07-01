@@ -2,54 +2,41 @@ import streamlit as st
 import google.generativeai as genai
 import PIL.Image
 
+# Giao diện An Tam Blinds
 st.set_page_config(page_title="An Tam Blinds Admin", layout="centered")
-st.title("🛠 An Tam Blinds App (Stable Version)")
+st.header("🛠 An Tam Blinds v1.0")
 
-st.sidebar.header("Cài đặt")
+# Nhập Key ở thanh bên cạnh
 api_key = st.sidebar.text_input("Dán Google API Key vào đây:", type="password")
 
 if not api_key:
-    st.warning("Jimmy ơi, hãy dán API Key vào ô bên trái nhé!")
+    st.info("Jimmy ơi, ông hãy dán cái API Key vào ô bên trái nhé!")
 else:
     try:
+        # Cấu hình AI
         genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
-        # Tự động tìm bộ não nào đang mở trong tài khoản của ông
-        model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Ưu tiên các dòng máy mạnh, nếu không có cái nào thì báo lỗi rõ ràng
-        if 'models/gemini-1.5-flash' in model_list:
-            model_name = 'models/gemini-1.5-flash'
-        elif 'models/gemini-pro-vision' in model_list:
-            model_name = 'models/gemini-pro-vision'
-        elif 'models/gemini-1.5-pro' in model_list:
-            model_name = 'models/gemini-1.5-pro'
-        else:
-            model_name = model_list[0] if model_list else None
+        # Mở camera chụp ảnh
+        uploaded_file = st.camera_input("Chụp ảnh sổ đo ngay")
 
-        if model_name:
-            model = genai.GenerativeModel(model_name)
-            st.sidebar.success(f"Đang dùng: {model_name}")
-            
-            uploaded_file = st.camera_input("Chụp ảnh sổ đo công trình")
-
-            if uploaded_file:
-                with st.spinner('Đang đọc sổ đo cho Jimmy...'):
-                    image = PIL.Image.open(uploaded_file)
-                    # Lệnh vắt kiệt AI để ra định dạng .l.kc
-                    prompt = """
-                    Bạn là trợ lý An Tam Blinds. Hãy đọc ảnh và liệt kê:
-                    1. Địa chỉ công trình.
-                    2. Kích thước trình bày CỰC KỲ CHÍNH XÁC theo dạng: Width/Height.l.kc
-                       (Ví dụ: 1235/1546.l.kc)
-                    3. Hướng L/R và Vải bên cạnh.
-                    Trả về tiếng Việt, để thông tin trong khung cho dễ copy.
-                    """
-                    response = model.generate_content([prompt, image])
-                    st.subheader("📋 KẾT QUẢ ĐƠN HÀNG (.l.kc):")
-                    st.code(response.text, language="text")
-        else:
-            st.error("Tài khoản này chưa mở bộ não AI nào. Jimmy kiểm tra lại Key nhé!")
+        if uploaded_file:
+            with st.spinner('Đang đọc sổ đo...'):
+                image = PIL.Image.open(uploaded_file)
+                
+                # Lệnh ép AI ra định dạng .l.kc cho Jimmy
+                prompt = """
+                Bạn là trợ lý cho An Tam Blinds. Đọc ảnh và liệt kê:
+                1. Địa chỉ.
+                2. Kích thước TRÌNH BÀY ĐÚNG DẠNG: Rộng/Cao.l.kc (Ví dụ: 1234/5678.l.kc)
+                3. Hướng L/R và Tên Vải.
+                Trả về kết quả tiếng Việt dễ hiểu.
+                """
+                
+                response = model.generate_content([prompt, image])
+                st.subheader("📋 KẾT QUẢ (.l.kc):")
+                st.code(response.text, language="text")
+                st.success("Xong rồi ông ơi!")
                 
     except Exception as e:
-        st.error(f"Lỗi hệ thống: {e}. Jimmy nhấn F5 lại giúp tui!")
+        st.error(f"Có lỗi nhỏ: {e}")
