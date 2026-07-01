@@ -2,67 +2,56 @@ import streamlit as st
 import google.generativeai as genai
 import PIL.Image
 import pandas as pd
+from fpdf import FPDF
 from io import BytesIO
 
-# --- CHẾ ĐỘ TỰ ĐỘNG MỞ KÉT SẮT (SECRETS) ---
-# Ưu tiên lấy mã từ Secrets trước, nếu không có mới hiện ô nhập
+# --- Cấu hình hệ thống tự động ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 
 st.set_page_config(page_title="An Tam Blinds Pro", layout="centered")
-st.header("🏠 An Tam Blinds - Hệ Thống Tự Động")
+st.header("🏠 An Tam Blinds - Quản lý Đa năng")
 
-# Nếu trong Secrets chưa có mã, mới hiện ô nhập ở bên trái
-if not api_key:
-    with st.sidebar:
-        st.warning("Chưa tìm thấy mã trong Secrets!")
-        api_key = st.text_input("Dán Google API Key vào đây để dùng tạm:", type="password")
+# Hàm chuyển ảnh thành PDF cho Hóa đơn
+def export_as_pdf(image_file):
+    pdf = FPDF()
+    pdf.add_page()
+    img = PIL.Image.open(image_file)
+    # Tự động canh ảnh vừa trang giấy A4
+    pdf.image(img, x=10, y=10, w=190)
+    return pdf.output()
 
 if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        
-        # Tự động lấy bộ não AI
-        raw_m = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = next((m for m in raw_m if "1.5-flash" in m), raw_m[0])
-        model = genai.GenerativeModel(model_name)
-        
-        if st.secrets.get("GEMINI_API_KEY"):
-            st.sidebar.success("✅ Đã kết nối tự động từ Secrets!")
-        else:
-            st.sidebar.info("⚠️ Đang dùng mã dán tạm thời")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    st.sidebar.success("✅ Hệ thống đã sẵn sàng!")
 
-        # Giao diện chính của Jimmy
-        task = st.radio("Ông muốn làm gì?", ["Ghi Sổ Đo (.l.kc)", "Chụp Hóa Đơn (Invoices)"])
+    # 2 Tùy chọn riêng biệt như Jimmy muốn
+    task = st.radio("Chọn loại công việc:", ["Ghi Sổ Đo (.l.kc) -> Xuất EXCEL", "Chụp Invoice -> Xuất PDF"])
 
-        if task == "Ghi Sổ Đo (.l.kc)":
-            uploaded_file = st.camera_input("Chụp ảnh sổ đo rèm")
-            if uploaded_file:
-                with st.spinner('AI An Tam đang đọc dữ liệu sạch...'):
-                    image = PIL.Image.open(uploaded_file)
-                    
-                    # Lệnh vắt kiệt AI để ra định dạng chuẩn của Jimmy
-                    prompt = """
-                    Bạn là thư ký của An Tam Blinds. Hãy đọc ảnh sổ đo và liệt kê:
-                    1. Địa chỉ công trình.
-                    2. Kích thước TRÌNH BÀY ĐÚNG DẠNG: Rộng/Cao.l.kc (Ví dụ: 1525/1458.l.kc)
-                    3. Hướng L/R và Tên Vải.
-                    Lưu ý: TUYỆT ĐỐI không ghi 'Mục 1', 'Hạng mục'. Chỉ liệt kê danh sách sạch. Trả về tiếng Việt.
-                    """
-                    response = model.generate_content([prompt, image])
-                    st.subheader("📋 DỮ LIỆU ĐƠN HÀNG:")
-                    st.code(response.text, language="text")
-                    
-                    # Tạo file Excel để tải về
-                    df = pd.DataFrame([{"DonHang": response.text}])
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False)
-                    st.download_button("📥 Tải File Excel", output.getvalue(), file_name="AnTam_DonHang.xlsx")
-        else:
-            st.camera_input("Chụp ảnh hóa đơn mua hàng (Invoices)")
-            st.info("Khi ông chụp, ảnh sẽ hiện ra để ông lưu vào Drive.")
+    if task == "Ghi Sổ Đo (.l.kc) -> Xuất EXCEL":
+        uploaded_file = st.camera_input("Chụp ảnh tờ sổ đo")
+        if uploaded_file:
+            with st.spinner('Đang tạo file Excel sạch...'):
+                img = PIL.Image.open(uploaded_file)
+                prompt = "Đọc ảnh sổ đo, liệt kê Địa chỉ và Kích thước dạng Rộng/Cao.l.kc. KHÔNG ghi chữ Hạng mục 1, 2. Trả về tiếng Việt."
+                response = model.generate_content([prompt, img])
+                st.code(response.text)
+                
+                # Tạo Excel
+                df = pd.DataFrame([{"Data": response.text}])
+                output_ex = BytesIO()
+                with pd.ExcelWriter(output_ex, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False)
+                st.download_button("📥 Tải về Excel", output_ex.getvalue(), "SoDo_AnTam.xlsx")
 
-    except Exception as e:
-        st.error(f"Lỗi: {e}")
+    else:
+        # CHỖ NÀY DÀNH RIÊNG CHO INVOICE -> XUẤT PDF
+        invoice_file = st.camera_input("Chụp ảnh hóa đơn mua hàng")
+        if invoice_file:
+            with st.spinner('Đang chuyển hóa đơn thành PDF...'):
+                pdf_data = export_as_pdf(invoice_file)
+                st.success("✅ Đã chuyển đổi thành PDF thành công!")
+                st.download_button("📥 Tải về Invoice (PDF)", pdf_data, "Invoice_AnTam.pdf")
+
 else:
-    st.warning("Jimmy ơi, hãy dán API Key vào Secrets hoặc ô bên trái để bắt đầu!")
+    st.warning("Jimmy ơi, nhớ dán API Key vào Secrets nhé!")
