@@ -2,40 +2,49 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import PIL.Image
-import io
 
-# Cấu hình giao diện App An Tam Blinds
+# Giao diện An Tam Blinds
 st.set_page_config(page_title="An Tam Blinds Admin", layout="centered")
 st.title("🛠 An Tam Blinds App (Google AI)")
 
-# Sidebar để dán Key
+# Menu bên trái
 st.sidebar.header("Cài đặt")
 api_key = st.sidebar.text_input("Dán Google API Key vào đây:", type="password")
 
 if not api_key:
-    st.warning("Jimmy ơi, ông hãy dán cái API Key lấy từ AI Studio vào ô bên trái nhé!")
+    st.warning("Jimmy ơi, hãy dán API Key lấy từ AI Studio vào ô bên trái nhé!")
 else:
     try:
-        # Cấu hình Google AI
+        # Cấu hình AI
         genai.configure(api_key=api_key)
+        
+        # Thử dùng bản Flash, nếu không được tự động đổi sang bản Pro
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        option = st.radio("Chọn loại:", ["Sổ đo công trình", "Hóa đơn Supplier"])
         uploaded_file = st.camera_input("Chụp ảnh sổ đo ngay")
 
         if uploaded_file:
-            with st.spinner('Máy đang đọc dữ liệu, Jimmy chờ xíu...'):
+            with st.spinner('Jimmy chờ xíu, máy đang phân tích sổ đo...'):
                 image = PIL.Image.open(uploaded_file)
-                # Lệnh yêu cầu AI đọc sổ đo bằng tiếng Việt
-                prompt = "Đây là sổ đo rèm cửa. Hãy đọc và liệt kê: 1. Địa chỉ, 2. Kích thước (Rộng/Cao.lkc), 3. Hướng L/R, 4. Vải, 5. Ghi chú. Trả về tiếng Việt rõ ràng từng dòng."
+                
+                # Lệnh đọc sổ đo cực kỳ chi tiết
+                prompt = """
+                Bạn là trợ lý cho cửa hàng An Tam Blinds. 
+                Hãy đọc hình ảnh và liệt kê:
+                1. Địa chỉ công trình.
+                2. Danh sách kích thước (Rộng x Cao).
+                3. Hướng L/R (nếu có).
+                4. Tên vải hoặc màu sắc.
+                5. Các ghi chú khác.
+                Trả về tiếng Việt rõ ràng từng dòng.
+                """
                 
                 response = model.generate_content([prompt, image])
                 
                 st.subheader("Kết quả AI đọc được:")
-                # Hiển thị kết quả trong một ô văn bản để dễ copy
-                result_text = st.text_area("Kết quả:", response.text, height=300)
-                
-                st.info("Sau khi AI đọc xong, Jimmy chỉ cần copy đoạn trên dán vào Excel là xong!")
+                st.markdown(response.text)
+                st.success("Tuyệt vời! AI đã đọc xong rồi đó Jimmy!")
                 
     except Exception as e:
-        st.error(f"Ối, có lỗi rồi: {e}. Ông kiểm tra lại cái API Key nhé!")
+        # Nếu vẫn lỗi 404, tui báo cho ông biết để thử đổi sang Gemini-Pro
+        st.error(f"Ối, hệ thống báo: {e}. Jimmy hãy thử nhấn F5 (Refresh) lại trình duyệt xem sao nhé!")
