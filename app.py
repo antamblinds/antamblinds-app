@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 import json
-Giao diện cho iPhone
+#Giao diện cho iPhone
 st.set_page_config(page_title="An Tam Blinds Admin", layout="centered")
 st.title("🛠 An Tam Blinds v1")
 Thanh menu bên trái
