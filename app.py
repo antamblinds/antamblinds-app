@@ -11,24 +11,23 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 st.set_page_config(page_title="An Tam Blinds Pro", layout="centered")
 st.header("🏠 An Tam Blinds - Quản lý Đa năng")
 
-# Hàm chuyển ảnh thành PDF cho Hóa đơn
+# SỬA LỖI TẠI ĐÂY: Hàm chuyển ảnh thành PDF đảm bảo định dạng chuẩn
 def export_as_pdf(image_file):
     pdf = FPDF()
     pdf.add_page()
     img = PIL.Image.open(image_file)
     # Tự động canh ảnh vừa trang giấy A4
     pdf.image(img, x=10, y=10, w=190)
-    return pdf.output()
+    # Ép kiểu về bytes để Streamlit không báo lỗi bytearray
+    return bytes(pdf.output())
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # --- CHIÊU CUỐI: TỰ ĐỘNG DÒ TÌM MODEL ---
-        # Tìm xem tài khoản của ông có model nào chạy được thì lấy cái đó
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # Ưu tiên Flash, nếu không có thì lấy cái đầu tiên tìm thấy
-        model_name = next((m for m in available_models if "flash" in m), available_models[0] if available_models else None)
+        # Tự động dò tìm bộ não AI khả dụng
+        raw_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        model_name = next((m for m in raw_models if "flash" in m), raw_models[0] if raw_models else None)
         
         if model_name:
             model = genai.GenerativeModel(model_name)
@@ -41,11 +40,16 @@ if api_key:
                 if uploaded_file:
                     with st.spinner('Đang tạo file Excel sạch...'):
                         img = PIL.Image.open(uploaded_file)
-                        prompt = "Đọc ảnh sổ đo, liệt kê Địa chỉ và Kích thước dạng Rộng/Cao.l.kc. KHÔNG ghi chữ Hạng mục 1, 2. Trả về tiếng Việt."
+                        prompt = """
+                        Bạn là thư ký của An Tam Blinds. Hãy đọc ảnh sổ đo và liệt kê:
+                        1. Địa chỉ công trình.
+                        2. Kích thước DẠNG: Rộng/Cao.l.kc (Ví dụ: 1525/1458.l.kc)
+                        3. Hướng L/R và Tên Vải.
+                        Lưu ý: TUYỆT ĐỐI KHÔNG ghi 'Mục 1', 'Hạng mục'. Chỉ liệt kê danh sách sạch. Trả về tiếng Việt.
+                        """
                         response = model.generate_content([prompt, img])
                         st.code(response.text)
                         
-                        # Tạo Excel
                         df = pd.DataFrame([{"Data": response.text}])
                         output_ex = BytesIO()
                         with pd.ExcelWriter(output_ex, engine='openpyxl') as writer:
@@ -53,14 +57,23 @@ if api_key:
                         st.download_button("📥 Tải về Excel", output_ex.getvalue(), "SoDo_AnTam.xlsx")
 
             else:
+                # CHỖ NÀY ĐÃ SỬA LỖI: Invoice xuất PDF
                 invoice_file = st.camera_input("Chụp ảnh hóa đơn mua hàng")
                 if invoice_file:
                     with st.spinner('Đang chuyển hóa đơn thành PDF...'):
-                        pdf_data = export_as_pdf(invoice_file)
-                        st.success("✅ Đã chuyển đổi thành PDF thành công!")
-                        st.download_button("📥 Tải về Invoice (PDF)", pdf_data, "Invoice_AnTam.pdf")
+                        try:
+                            pdf_bytes = export_as_pdf(invoice_file)
+                            st.success("✅ Đã chuyển đổi thành PDF thành công!")
+                            st.download_button(
+                                label="📥 Tải về Invoice (PDF)",
+                                data=pdf_bytes,
+                                file_name="Invoice_AnTam.pdf",
+                                mime="application/pdf"
+                            )
+                        except Exception as pdf_err:
+                            st.error(f"Lỗi tạo PDF: {pdf_err}")
         else:
-            st.error("Không tìm thấy bộ não AI nào khả dụng. Kiểm tra lại Key nhé!")
+            st.error("Không tìm thấy bộ não AI khả dụng.")
 
     except Exception as e:
         st.error(f"Lỗi: {e}. Jimmy nhấn F5 lại nhé!")
