@@ -5,17 +5,40 @@ import pandas as pd
 from fpdf import FPDF
 from io import BytesIO
 import re
+import json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
-# --- Cấu hình hệ thống ---
+# --- 1. LẤY "CHÌA KHÓA" TỪ PHẦN SECRETS ÔNG VỪA DÁN ---
 api_key = st.secrets.get("GEMINI_API_KEY")
+drive_json = st.secrets.get("GOOGLE_DRIVE_JSON")
+folder_measure = st.secrets.get("FOLDER_MEASUREMENTS")
+folder_invoice = st.secrets.get("FOLDER_INVOICES")
 
 st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
-st.header("🏠 An Tam Blinds - Báo Giá Tự Động")
+st.header("🏠 AN TAM BLINDS - TỰ ĐỘNG HÓA CLOUD")
 
-with st.sidebar:
-    st.header("Cài đặt đơn giá")
-    unit_price = st.number_input("Nhập đơn giá ($$/m2):", min_value=0.0, value=100.0, step=5.0)
+# --- 2. HÀM GỬI FILE LÊN GOOGLE DRIVE (Cái này quan trọng nhất) ---
+def upload_to_drive(file_content, file_name, mime_type, target_folder):
+    try:
+        # Giải mã cái mớ JSON trong Secrets
+        info = json.loads(drive_json)
+        creds = service_account.Credentials.from_service_account_info(info)
+        service = build('drive', 'v3', credentials=creds)
+        
+        # Tạo thông tin file và chỉ định nó vào folder nào
+        file_metadata = {'name': file_name, 'parents': [target_folder]}
+        media = MediaIoBaseUpload(BytesIO(file_content), mimetype=mime_type, resumable=True)
+        
+        # Thực hiện lệnh upload
+        service.files().create(body=file_metadata, media_body=media).execute()
+        return True
+    except Exception as e:
+        st.error(f"Lỗi Drive: {e}")
+        return False
 
+# --- 3. HÀM TẠO PDF TỪ ẢNH (Dùng cho Invoice) ---
 def export_as_pdf(image_file):
     pdf = FPDF()
     pdf.add_page()
@@ -23,98 +46,77 @@ def export_as_pdf(image_file):
     pdf.image(img, x=10, y=10, w=190)
     return bytes(pdf.output())
 
-def clean_filename(text):
-    if not text: return "DonHang_AnTam"
-    clean = re.sub(r'[\\/*?:"<>|]', "", text)
-    return clean.strip().replace(" ", "_")
-
+# --- 4. CHƯƠNG TRÌNH CHÍNH ---
 if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        raw_m = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = next((m for m in raw_m if "flash" in m), raw_m[0])
-        model = genai.GenerativeModel(model_name)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-        task = st.radio("Chọn loại công việc:", ["Ghi Sổ Đo (.lkc) & Tính Tiền", "Chụp Invoice -> PDF"])
+    st.sidebar.title("DANH MỤC")
+    task = st.sidebar.radio("CHỌN LOẠI CÔNG VIỆC:", ["Ghi Sổ Đo -> Cloud", "Lưu Invoice -> Cloud"])
+    unit_price = st.sidebar.number_input("Đơn giá ($$/m2):", value=100.0)
 
-        if task == "Ghi Sổ Đo (.lkc) & Tính Tiền":
-            uploaded_file = st.camera_input("Chụp sổ đo thực tế")
-            if uploaded_file:
-                with st.spinner('Đang soi chi tiết số đo từ ảnh...'):
-                    img = PIL.Image.open(uploaded_file)
-                    # Lệnh AI: Nhấn mạnh việc đọc con số CHÍNH XÁC từ ảnh
-                    prompt = """
-                    Bạn là trợ lý đọc số liệu cực kỳ chính xác cho An Tam Blinds. 
-                    NHIỆM VỤ:
-                    1. Tìm ĐỊA CHỈ khách hàng trên tờ giấy.
-                    2. Đọc CHÍNH XÁC từng con số Rộng và Cao của mỗi cửa (không được làm tròn số đo thực tế).
-                    3. Trình bày kích thước theo dạng: [SốRộng]/[SốCao].lkc 
+    # A. PHẦN XỬ LÝ SỔ ĐO
+    if task == "Ghi Sổ Đo -> Cloud":
+        uploaded_file = st.camera_input("CHỤP SỔ ĐO")
+        if uploaded_file:
+            with st.spinner('AI đang đọc và gửi đi...'):
+                img = PIL.Image.open(uploaded_file)
+                prompt = "Read image accurately. Find ADDRESS. List items: [Location] | [Width/Height.lkc]. Format: ADDRESS: [address] \n DATA: [items]"
+                response = model.generate_content([prompt, img])
+                text_data = response.text
+                
+                address_found = "DonHang_Moi"
+                data_rows = []
+                lines = text_data.strip().split('\n')
+                for line in lines:
+                    if "ADDRESS:" in line:
+                        address_found = line.split("ADDRESS:")[1].strip()
+                    elif "|" in line:
+                        parts = line.split("|")
+                        if len(parts) >= 2:
+                            match = re.search(r"(\d+)/(\d+)", parts[1])
+                            if match:
+                                w, h = float(match.group(1).strip()), float(match.group(2).strip())
+                                area = max((w * h) / 1000000, 1.5)
+                                data_rows.append({
+                                    "Vị trí": parts[0].strip(),
+                                    "Kích thước (.lkc)": parts[1].strip(),
+                                    "M2 thực tế": round((w * h) / 1000000, 3),
+                                    "M2 tính tiền": round(area, 2),
+                                    "Thành tiền ($$)": round(area * unit_price, 2)
+                                })
+                
+                if data_rows:
+                    df = pd.DataFrame(data_rows)
+                    st.subheader(f"📍 Công trình: {address_found}")
+                    st.table(df)
                     
-                    TRẢ VỀ ĐÚNG CẤU TRÚC SAU:
-                    ADDRESS: [Địa chỉ]
-                    DATA:
-                    [Vị trí] | [SốRộng]/[SốCao].lkc | [Ghi chú]
+                    # Tạo file Excel trong bộ nhớ tạm
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False)
                     
-                    Ví dụ: Nếu ảnh ghi Rộng 1523 và Cao 1457 thì phải ghi là 1523/1457.lkc
-                    Tuyệt đối không bịa số. Trả về tiếng Việt.
-                    """
-                    response = model.generate_content([prompt, img])
-                    text_data = response.text
+                    # Đặt tên file (xoá ký tự lạ)
+                    clean_name = re.sub(r'[\\/*?:"<>|]', "", address_found).strip().replace(" ", "_")
+                    xls_filename = f"{clean_name}.xlsx"
                     
-                    address_val = "DonHang_AnTam"
-                    data_rows = []
+                    # GỬI THẲNG LÊN CLOUD
+                    if upload_to_drive(output.getvalue(), xls_filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", folder_measure):
+                        st.success(f"✅ ĐÃ LƯU: '{xls_filename}' VÀO FOLDER SỔ ĐO TRÊN DRIVE!")
                     
-                    lines = text_data.strip().split('\n')
-                    for line in lines:
-                        if line.startswith("ADDRESS:"):
-                            address_val = line.replace("ADDRESS:", "").strip()
-                        elif "|" in line:
-                            parts = line.split("|")
-                            if len(parts) >= 2:
-                                vi_tri = parts[0].strip()
-                                size_str = parts[1].strip() # Ví dụ: 1523/1457.lkc (số từ ảnh)
-                                notes = parts[2].strip() if len(parts) > 2 else ""
-                                
-                                # Tách số đo chính xác để tính diện tích
-                                match = re.search(r"(\d+)/(\d+)", size_str)
-                                if match:
-                                    w_mm = float(match.group(1))
-                                    h_mm = float(match.group(2))
-                                    # Diện tích m2 thực tế
-                                    area_real = (w_mm * h_mm) / 1_000_000
-                                    # Áp dụng luật tính tiền của Jimmy (tối thiểu 1.5m2)
-                                    area_billing = max(area_real, 1.5)
-                                    total = area_billing * unit_price
-                                    
-                                    data_rows.append({
-                                        "Vị trí": vi_tri,
-                                        "Kích thước (.lkc)": size_str, # Đây là số đo CHUẨN từ ảnh
-                                        "M2 thực tế": round(area_real, 2),
-                                        "M2 tính tiền": round(area_billing, 2),
-                                        "Thành tiền ($$)": round(total, 2),
-                                        "Ghi chú": notes
-                                    })
-                    
-                    if data_rows:
-                        df = pd.DataFrame(data_rows)
-                        st.subheader(f"📊 Báo giá cho: {address_val}")
-                        st.table(df)
-                        
-                        file_name_final = f"{clean_filename(address_val)}.xlsx"
-                        
-                        output_ex = BytesIO()
-                        with pd.ExcelWriter(output_ex, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False)
-                        
-                        st.download_button(
-                            label=f"📥 TẢI EXCEL: {file_name_final}",
-                            data=output_ex.getvalue(),
-                            file_name=file_name_final,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.warning("AI không đọc được số liệu. Jimmy hãy chụp ảnh vuông góc và rõ nét hơn nhé!")
-    except Exception as e:
-        st.error(f"Lỗi: {e}")
+                    st.download_button("Tải file về máy", output.getvalue(), xls_filename)
+
+    # B. PHẦN XỬ LÝ INVOICE
+    else:
+        invoice_file = st.camera_input("CHỤP INVOICE CẦN LƯU")
+        if invoice_file:
+            with st.spinner('Đang tạo PDF và gửi lên Cloud...'):
+                pdf_bytes = export_as_pdf(invoice_file)
+                pdf_filename = "Invoice_Moi.pdf"
+                
+                if upload_to_drive(pdf_bytes, pdf_filename, "application/pdf", folder_invoice):
+                    st.success("✅ ĐÃ LƯU: INVOICE VÀO FOLDER INVOICE TRÊN DRIVE!")
+                
+                st.download_button("Tải PDF về máy", pdf_bytes, pdf_filename)
 else:
-    st.info("Nhớ dán API Key vào Secrets nha Jimmy!")
+    st.error("Chưa có API Key kìa Jimmy ơi!")
