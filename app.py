@@ -10,10 +10,10 @@ import re
 api_key = st.secrets.get("GEMINI_API_KEY")
 
 st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
-st.header("🏠 An Tam Blinds - Quản lý Báo giá")
+st.header("🏠 An Tam Blinds - Báo Giá Tự Động")
 
 with st.sidebar:
-    st.header("Cài đặt báo giá")
+    st.header("Cài đặt đơn giá")
     unit_price = st.number_input("Nhập đơn giá ($$/m2):", min_value=0.0, value=100.0, step=5.0)
 
 def export_as_pdf(image_file):
@@ -38,18 +38,25 @@ if api_key:
         task = st.radio("Chọn loại công việc:", ["Ghi Sổ Đo (.lkc) & Tính Tiền", "Chụp Invoice -> PDF"])
 
         if task == "Ghi Sổ Đo (.lkc) & Tính Tiền":
-            uploaded_file = st.camera_input("Chụp sổ đo")
+            uploaded_file = st.camera_input("Chụp sổ đo thực tế")
             if uploaded_file:
-                with st.spinner('Đang đọc địa chỉ và lấy số đo .lkc...'):
+                with st.spinner('Đang soi chi tiết số đo từ ảnh...'):
                     img = PIL.Image.open(uploaded_file)
+                    # Lệnh AI: Nhấn mạnh việc đọc con số CHÍNH XÁC từ ảnh
                     prompt = """
-                    Đọc ảnh sổ đo rèm và trả về đúng cấu trúc sau:
-                    ADDRESS: [Địa chỉ khách hàng]
-                    DATA:
-                    Phòng/Vị trí | Rộng/Cao.lkc | Ghi chú
+                    Bạn là trợ lý đọc số liệu cực kỳ chính xác cho An Tam Blinds. 
+                    NHIỆM VỤ:
+                    1. Tìm ĐỊA CHỈ khách hàng trên tờ giấy.
+                    2. Đọc CHÍNH XÁC từng con số Rộng và Cao của mỗi cửa (không được làm tròn số đo thực tế).
+                    3. Trình bày kích thước theo dạng: [SốRộng]/[SốCao].lkc 
                     
-                    LƯU Ý: Tuyệt đối giữ nguyên định dạng Rộng/Cao.lkc (ví dụ 1234/5678.lkc).
-                    Không ghi Hạng mục 1, 2. Chỉ ghi dữ liệu sạch.
+                    TRẢ VỀ ĐÚNG CẤU TRÚC SAU:
+                    ADDRESS: [Địa chỉ]
+                    DATA:
+                    [Vị trí] | [SốRộng]/[SốCao].lkc | [Ghi chú]
+                    
+                    Ví dụ: Nếu ảnh ghi Rộng 1523 và Cao 1457 thì phải ghi là 1523/1457.lkc
+                    Tuyệt đối không bịa số. Trả về tiếng Việt.
                     """
                     response = model.generate_content([prompt, img])
                     text_data = response.text
@@ -65,27 +72,32 @@ if api_key:
                             parts = line.split("|")
                             if len(parts) >= 2:
                                 vi_tri = parts[0].strip()
-                                size_str = parts[1].strip() # Ví dụ: 1234/4562.lkc
+                                size_str = parts[1].strip() # Ví dụ: 1523/1457.lkc (số từ ảnh)
                                 notes = parts[2].strip() if len(parts) > 2 else ""
                                 
-                                # Tách số để tính diện tích
+                                # Tách số đo chính xác để tính diện tích
                                 match = re.search(r"(\d+)/(\d+)", size_str)
                                 if match:
                                     w_mm = float(match.group(1))
                                     h_mm = float(match.group(2))
-                                    area = max((w_mm * h_mm) / 1_000_000, 1.5)
-                                    total = area * unit_price
+                                    # Diện tích m2 thực tế
+                                    area_real = (w_mm * h_mm) / 1_000_000
+                                    # Áp dụng luật tính tiền của Jimmy (tối thiểu 1.5m2)
+                                    area_billing = max(area_real, 1.5)
+                                    total = area_billing * unit_price
                                     
                                     data_rows.append({
                                         "Vị trí": vi_tri,
-                                        "Kích thước (.lkc)": size_str, # Cột này giữ nguyên .lkc cho Jimmy
-                                        "M2 tính tiền": round(area, 2),
+                                        "Kích thước (.lkc)": size_str, # Đây là số đo CHUẨN từ ảnh
+                                        "M2 thực tế": round(area_real, 2),
+                                        "M2 tính tiền": round(area_billing, 2),
                                         "Thành tiền ($$)": round(total, 2),
                                         "Ghi chú": notes
                                     })
                     
                     if data_rows:
                         df = pd.DataFrame(data_rows)
+                        st.subheader(f"📊 Báo giá cho: {address_val}")
                         st.table(df)
                         
                         file_name_final = f"{clean_filename(address_val)}.xlsx"
@@ -95,20 +107,14 @@ if api_key:
                             df.to_excel(writer, index=False)
                         
                         st.download_button(
-                            label=f"📥 TẢI FILE: {file_name_final}",
+                            label=f"📥 TẢI EXCEL: {file_name_final}",
                             data=output_ex.getvalue(),
                             file_name=file_name_final,
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                     else:
-                        st.warning("Không tìm thấy dữ liệu dòng. Jimmy chụp lại rõ hơn nhé!")
-        else:
-            invoice_file = st.camera_input("Chụp Invoice")
-            if invoice_file:
-                pdf_data = export_as_pdf(invoice_file)
-                st.download_button("📥 Tải về PDF", pdf_data, "Invoice_AnTam.pdf", "application/pdf")
-
+                        st.warning("AI không đọc được số liệu. Jimmy hãy chụp ảnh vuông góc và rõ nét hơn nhé!")
     except Exception as e:
         st.error(f"Lỗi: {e}")
 else:
-    st.info("Dán API Key vào Secrets nha Jimmy!")
+    st.info("Nhớ dán API Key vào Secrets nha Jimmy!")
