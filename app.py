@@ -49,7 +49,7 @@ def export_as_pdf(image_file):
 # --- 4. CHƯƠNG TRÌNH CHÍNH ---
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('models/gemini-1.5-flash')
 
     st.sidebar.title("DANH MỤC")
     task = st.sidebar.radio("CHỌN LOẠI CÔNG VIỆC:", ["Ghi Sổ Đo -> Cloud", "Lưu Invoice -> Cloud"])
