@@ -14,13 +14,14 @@ from googleapiclient.http import MediaIoBaseUpload
 st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
 st.header("🏠 AN TAM BLINDS - QUẢN LÝ CLOUD")
 
-# Lấy thông tin (Sửa lỗi lấy Key bị dư khoảng trắng)
-api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
+# Lấy thông tin từ Secrets
+raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
+api_key = raw_api_key.strip() # Xóa khoảng trắng dư thừa
 drive_json = st.secrets.get("GOOGLE_DRIVE_JSON")
 folder_measure = st.secrets.get("FOLDER_MEASUREMENTS")
-folder_invoice = st.secrets.get("FOLDER_INVOCES")
+folder_invoice = st.secrets.get("FOLDER_INVOICES")
 
-# Hàm gửi Drive
+# Hàm gửi file lên Drive
 def upload_to_drive(file_content, file_name, mime_type, target_folder):
     try:
         info = json.loads(drive_json)
@@ -34,16 +35,15 @@ def upload_to_drive(file_content, file_name, mime_type, target_folder):
         st.error(f"Lỗi Drive: {e}")
         return False
 
-# 2. CHƯƠNG TRÌNH CHÍNH
+# 2. XỬ LÝ CHÍNH
 if api_key:
     try:
-        # Cấu hình với mã AQ của Jimmy
+        # Cấu hình AI với mã AQ của Jimmy
         genai.configure(api_key=api_key)
-        
-        # THAY ĐỔI QUAN TRỌNG: Thêm bản 'latest' để sửa lỗi 404
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        # Sửa lỗi 404: Dùng tên model chuẩn nhất cho mã AQ
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        st.sidebar.title("MENU")
+        st.sidebar.title("DANH MỤC")
         task = st.sidebar.radio("CHỌN VIỆC:", ["Ghi Sổ Đo -> Cloud", "Lưu Invoice -> Cloud"])
         unit_price = st.sidebar.number_input("Giá ($/m2):", value=100.0)
 
@@ -52,11 +52,11 @@ if api_key:
             if uploaded_file:
                 with st.spinner('AI đang đọc số đo...'):
                     img = PIL.Image.open(uploaded_file)
-                    # Ra lệnh đơn giản nhất cho AI
+                    # Lệnh AI đơn giản nhất để tránh lỗi
                     prompt = "Find ADDRESS. List items: [Location] | [Width/Height]. Format: ADDRESS: [address] DATA: [items]"
                     response = model.generate_content([prompt, img])
                     
-                    st.write("### Kết quả:")
+                    st.write("### Kết quả đọc được:")
                     st.info(response.text)
                     
                     # Tạo Excel và gửi Drive
@@ -65,13 +65,13 @@ if api_key:
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df.to_excel(writer, index=False)
                     
-                    if upload_to_drive(output.getvalue(), "Don_Hang_Moi.xlsx", folder_measure):
-                        st.success("✅ ĐÃ GỬI LÊN DRIVE THÀNH CÔNG!")
+                    if upload_to_drive(output.getvalue(), "So_Do_An_Tam.xlsx", folder_measure):
+                        st.success("✅ QUÁ NGON! FILE ĐÃ VÀO DRIVE!")
         
-        else: # Invoice
+        else: # Phần chụp Invoice
             invoice_file = st.camera_input("CHỤP INVOICE")
             if invoice_file:
-                with st.spinner('Đang gửi...'):
+                with st.spinner('Đang lưu...'):
                     pdf = FPDF()
                     pdf.add_page()
                     img_inv = PIL.Image.open(invoice_file)
@@ -80,6 +80,6 @@ if api_key:
                         st.success("✅ ĐÃ LƯU INVOICE!")
 
     except Exception as e:
-        st.error(f"Vẫn còn lỗi AI: {e}. Jimmy kiểm tra lại xem đã bấm ENABLE Generative Language API bên Google Cloud chưa nhé!")
+        st.error(f"Lỗi hệ thống: {e}")
 else:
-    st.error("Chưa thấy mã AQ trong Secrets!")
+    st.error("Dán chìa khóa AQ trên vào Secrets nha Jimmy!")
