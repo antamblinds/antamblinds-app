@@ -26,94 +26,89 @@ def export_as_pdf(image_file):
 
 # Hàm làm sạch địa chỉ để đặt tên file
 def clean_filename(text):
-    # Xóa các ký tự không được phép trong tên file
-    clean_name = re.sub(r'[\\/*?:"<>|]', "", text)
+    clean_name = re.sub(r'[\\/*?Internal:"<>|]', "", text)
     return clean_name.strip().replace(" ", "_")
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
+        # SỬA LỖI TẠI ĐÂY: Dùng đồng nhất tên biến raw_m
         raw_m = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = next((m for m in raw_m if "flash" in m), raw_models[0])
-        model = genai.GenerativeModel(model_name)
+        model_name = next((m for m in raw_m if "flash" in m), raw_m[0] if raw_m else None)
+        
+        if model_name:
+            model = genai.GenerativeModel(model_name)
+            st.sidebar.success(f"✅ Đã kết nối: {model_name}")
 
-        task = st.radio("Chọn loại công việc:", ["Ghi Sổ Đo & Tính Tiền -> EXCEL", "Chụp Invoice -> Xuất PDF"])
+            task = st.radio("Chọn loại công việc:", ["Ghi Sổ Đo & Tính Tiền -> EXCEL", "Chụp Invoice -> Xuất PDF"])
 
-        if task == "Ghi Sổ Đo & Tính Tiền -> EXCEL":
-            uploaded_file = st.camera_input("Chụp sổ đo rèm")
-            if uploaded_file:
-                with st.spinner('Đang đọc địa chỉ và tính toán...'):
-                    img = PIL.Image.open(uploaded_file)
-                    # Lệnh AI: Yêu cầu lấy địa chỉ ra dòng đầu tiên
-                    prompt = """
-                    Bạn là trợ lý cho An Tam Blinds. Hãy đọc ảnh sổ đo và:
-                    1. Tìm địa chỉ công trình chính.
-                    2. Liệt kê danh sách cửa theo định dạng: [Vị trí] | [Kích thước Rộng/Cao.l.kc] | [Ghi chú]
-                    Trả về theo cấu trúc:
-                    Địa chỉ: [Tên địa chỉ tìm thấy]
-                    [Dữ liệu các dòng cửa...]
-                    """
-                    response = model.generate_content([prompt, img])
-                    text_data = response.text
-                    st.code(text_data)
-                    
-                    # --- BÓC TÁCH ĐỊA CHỈ & DỮ LIỆU ---
-                    lines = text_data.strip().split('\n')
-                    address_found = "DonHang_AnTam" # Tên mặc định nếu không tìm thấy
-                    data_rows = []
-                    
-                    for line in lines:
-                        if line.startswith("Địa chỉ:"):
-                            address_found = line.replace("Địa chỉ:", "").strip()
-                        elif "|" in line:
-                            parts = line.split("|")
-                            vi_tri = parts[0].strip()
-                            size_str = parts[1].strip()
-                            ghi_chu = parts[2].strip() if len(parts) > 2 else ""
-                            
-                            match = re.search(r"(\d+)/(\d+)", size_str)
-                            if match:
-                                w_mm = float(match.group(1))
-                                h_mm = float(match.group(2))
-                                area_real = (w_mm * h_mm) / 1_000_000
-                                area_final = max(area_real, 1.5)
-                                total = area_final * unit_price
+            if task == "Ghi Sổ Đo & Tính Tiền -> EXCEL":
+                uploaded_file = st.camera_input("Chụp sổ đo rèm")
+                if uploaded_file:
+                    with st.spinner('Đang đọc địa chỉ và tính toán...'):
+                        img = PIL.Image.open(uploaded_file)
+                        prompt = """
+                        Bạn là trợ lý cho An Tam Blinds. Hãy đọc ảnh sổ đo và:
+                        1. Tìm địa chỉ công trình chính.
+                        2. Liệt kê danh sách cửa theo định dạng: [Vị trí] | [Kích thước Rộng/Cao.l.kc] | [Ghi chú]
+                        Trả về theo cấu trúc:
+                        Địa chỉ: [Tên địa chỉ tìm thấy]
+                        [Dữ liệu các dòng cửa...]
+                        """
+                        response = model.generate_content([prompt, img])
+                        text_data = response.text
+                        st.code(text_data)
+                        
+                        lines = text_data.strip().split('\n')
+                        address_found = "DonHang_AnTam"
+                        data_rows = []
+                        
+                        for line in lines:
+                            if "Địa chỉ:" in line:
+                                address_found = line.split("Địa chỉ:")[1].strip()
+                            elif "|" in line:
+                                parts = line.split("|")
+                                vi_tri = parts[0].strip()
+                                size_str = parts[1].strip()
+                                ghi_chu = parts[2].strip() if len(parts) > 2 else ""
                                 
-                                data_rows.append({
-                                    "Vị trí": vi_tri, "Kích thước gốc": size_str,
-                                    "Diện tích thực (m2)": round(area_real, 2),
-                                    "Diện tích tính tiền (m2)": round(area_final, 2),
-                                    "Thành tiền ($$)": round(total, 2), "Ghi chú": ghi_chu
-                                })
-                    
-                    if data_rows:
-                        df = pd.DataFrame(data_rows)
-                        st.dataframe(df)
-                        total_bill = df["Thành tiền ($$)"].sum()
-                        st.metric(f"TỔNG CỘNG ({address_found})", f"$${total_bill:,.2f}")
+                                match = re.search(r"(\d+)/(\d+)", size_str)
+                                if match:
+                                    w_mm = float(match.group(1))
+                                    h_mm = float(match.group(2))
+                                    area_real = (w_mm * h_mm) / 1_000_000
+                                    area_final = max(area_real, 1.5)
+                                    total = area_final * unit_price
+                                    
+                                    data_rows.append({
+                                        "Vị trí": vi_tri, "Kích thước gốc": size_str,
+                                        "Diện tích tính tiền (m2)": round(area_final, 2),
+                                        "Thành tiền ($$)": round(total, 2), "Ghi chú": ghi_chu
+                                    })
                         
-                        # ĐẶT TÊN FILE THEO ĐỊA CHỈ
-                        final_filename = f"{clean_filename(address_found)}.xlsx"
-                        
-                        output_ex = BytesIO()
-                        with pd.ExcelWriter(output_ex, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False)
-                        
-                        st.download_button(
-                            label=f"📥 Tải File: {final_filename}",
-                            data=output_ex.getvalue(),
-                            file_name=final_filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.warning("Không đọc được số liệu, Jimmy chụp lại rõ hơn nhé!")
-
+                        if data_rows:
+                            df = pd.DataFrame(data_rows)
+                            st.dataframe(df)
+                            final_filename = f"{clean_filename(address_found)}.xlsx"
+                            
+                            output_ex = BytesIO()
+                            with pd.ExcelWriter(output_ex, engine='openpyxl') as writer:
+                                df.to_excel(writer, index=False)
+                            
+                            st.download_button(
+                                label=f"📥 Tải File: {final_filename}",
+                                data=output_ex.getvalue(),
+                                file_name=final_filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+            else:
+                invoice_file = st.camera_input("Chụp Invoice")
+                if invoice_file:
+                    with st.spinner('Đang tạo PDF...'):
+                        pdf_bytes = export_as_pdf(invoice_file)
+                        st.download_button("📥 Tải về Invoice (PDF)", pdf_bytes, "Invoice_AnTam.pdf", "application/pdf")
         else:
-            invoice_file = st.camera_input("Chụp Invoice")
-            if invoice_file:
-                pdf_bytes = export_as_pdf(invoice_file)
-                st.download_button("📥 Tải về Invoice (PDF)", pdf_bytes, "Invoice_AnTam.pdf", "application/pdf")
-
+            st.error("Không tìm thấy bộ não AI khả dụng!")
     except Exception as e:
         st.error(f"Lỗi: {e}")
 else:
