@@ -6,81 +6,103 @@ from io import BytesIO
 from fpdf import FPDF
 import re
 
-# 1. CẤU HÌNH HUB
-st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
-st.header("🏠 AN TAM BLINDS - CÔNG CỤ XUẤT FILE")
+# 1. CẤU HÌNH GIAO DIỆN CHUẨN
+st.set_page_config(page_title="An Tam Blinds Master", layout="wide")
 
+# Lấy mã API (Mã AQ)
 api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
 
-# Bộ nhớ tạm
-if 'final_data' not in st.session_state: st.session_state.final_data = None
-if 'file_name_cust' not in st.session_state: st.session_state.file_name_cust = "Khach_Hang"
+def main():
+    st.header("🏠 AN TAM BLINDS - HỆ THỐNG TỰ ĐỘNG")
+    
+    if not api_key:
+        st.error("Jimmy ơi, ông chưa dán mã API vào Secrets kìa!")
+        return
 
-if api_key:
+    # Cấu hình AI
     genai.configure(api_key=api_key)
-    models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    model = genai.GenerativeModel(models[0])
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
+    # MENU BÊN TRÁI RÕ RÀNG
     st.sidebar.title("DANH MỤC")
-    task = st.sidebar.radio("CHỌN VIỆC:", ["📝 Ghi Số Đo -> Excel", "🧾 Lưu Invoice -> PDF"])
+    task = st.sidebar.radio("CHỌN VIỆC CẦN LÀM:", ["📝 Ghi Sổ Đo -> Excel", "🧾 Lưu Invoice -> PDF"], key="main_task")
 
+    # --- PHẦN 1: GHI SỔ ĐO (XUẤT EXCEL THEO ĐỊA CHỈ) ---
     if task == "📝 Ghi Sổ Đo -> Excel":
-        img_file = st.camera_input("CHỤP SỔ ĐO")
+        st.subheader("📝 CHỤP SỔ ĐO (AI tự động bóc số & đặt tên file)")
+        # Đặt key riêng biệt để không bị lẫn với Invoice
+        img_file = st.camera_input("ĐƯA SỔ ĐO VÀO CAMERA", key="cam_sodo")
         
         if img_file:
-            if st.button("🚀 XÁC NHẬN ĐỌC SỐ ĐO"):
-                with st.spinner('AI đang bóc tách số liệu...'):
-                    try:
-                        img = PIL.Image.open(img_file)
-                        # Ép AI ghi đúng chữ ADDRESS để mình bắt tên file
-                        prompt = "Identify the job address and measurements. MUST start with 'ADDRESS: [address]'. Then list data: [Location] | [Width] | [Height] | [Note]"
-                        res = model.generate_content([prompt, img])
-                        st.session_state.final_data = res.text
+            with st.spinner('AI đang đọc và đặt tên file...'):
+                try:
+                    img = PIL.Image.open(img_file)
+                    # Prompt ép AI lấy đúng địa chỉ để làm tên file
+                    prompt = "Identify address and measurements. Format: ADDRESS: [addr] DATA: [Location | Width | Height]"
+                    res = model.generate_content([prompt, img])
+                    raw_text = res.text
+                    
+                    st.success("✅ AI ĐÃ ĐỌC XONG!")
+                    st.text_area("Nội dung AI thấy:", raw_text, height=100)
+                    
+                    # 🎯 XỬ LÝ TÊN FILE THEO ĐỊA CHỈ
+                    file_name = "Khach_Hang_An_Tam"
+                    addr_match = re.search(r'ADDRESS:\s*(.*)', raw_text, re.IGNORECASE)
+                    if addr_match:
+                        # Lấy địa chỉ làm tên file, bỏ dấu phẩy/khoảng trắng cho sạch
+                        file_name = addr_match.group(1).split('\n')[0].strip().replace(" ","_").replace(",","")
+                    
+                    # 🎯 CHUYỂN DỮ LIỆU SANG BẢNG EXCEL
+                    rows = []
+                    matches = re.findall(r'([^|\n]+?)\s*[|:/xX]\s*(\d{3,4})\s*[|/xX]\s*(\d{3,4})', raw_text)
+                    for m in matches:
+                        rows.append({"Vị trí": m[0].strip(), "Ngang (mm)": m[1], "Cao (mm)": m[2]})
+                    
+                    if rows:
+                        df = pd.DataFrame(rows)
+                        st.table(df)
                         
-                        # TÌM ĐỊA CHỈ ĐỂ ĐẶT TÊN FILE (Bắt cả tiếng Anh lẫn tiếng Việt)
-                        raw = res.text
-                        addr_search = re.search(r'(ADDRESS:|Địa chỉ|Dia chi):\s*(.*)', raw, re.IGNORECASE)
-                        if addr_search:
-                            # Lấy địa chỉ, bỏ dấu phẩy và khoảng trắng để làm tên file sạch
-                            clean_addr = addr_search.group(2).split('\n')[0].strip().replace(" ","_").replace(",","")
-                            st.session_state.file_name_cust = clean_addr
-                        st.success(f"Đã nhận diện địa chỉ: {st.session_state.file_name_cust}")
-                    except Exception as e:
+                        # NÚT TẢI EXCEL (TÊN FILE LÀ ĐỊA CHỈ)
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False)
+                        
+                        st.download_button(
+                            label=f"📥 TẢI FILE EXCEL: {file_name}.xlsx",
+                            data=output.getvalue(),
+                            file_name=f"{file_name}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="btn_excel"
+                        )
+                    else:
+                        st.warning("AI đọc được chữ nhưng không thấy số đo mm. Ông chụp gần lại tí nhé!")
+                except Exception as e:
+                    if "429" in str(e):
+                        st.error("AI mệt rồi (429), ông đợi 30 giây rồi chụp lại phát nữa nhé!")
+                    else:
                         st.error(f"Lỗi: {e}")
 
-        if st.session_state.final_data:
-            st.info(st.session_state.final_data)
-            rows = []
-            # Tách số đo
-            matches = re.findall(r'([^|\n]+?)\s*[|:/xX]\s*(\d{3,4})\s*[|/xX]\s*(\d{3,4})', st.session_state.final_data)
-            for m in matches:
-                rows.append({
-                    "Vị trí": m[0].strip(),
-                    "Kích thước": f"{m[1]}/{m[2]}.L.kc",
-                    "Địa chỉ khách": st.session_state.file_name_cust.replace("_"," ")
-                })
-            
-            if rows:
-                df = pd.DataFrame(rows)
-                st.table(df)
+    # --- PHẦN 2: LƯU INVOICE (XUẤT PDF) ---
+    else:
+        st.subheader("🧾 CHỤP INVOICE (Chuyển sang PDF)")
+        cust_name = st.text_input("Nhập tên khách/Địa chỉ để đặt tên file PDF:", "Invoice_AnTam", key="pdf_name_input")
+        inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="cam_invoice")
+        
+        if inv_img:
+            with st.spinner('Đang tạo file PDF...'):
+                pdf = FPDF()
+                pdf.add_page()
+                img_p = PIL.Image.open(inv_img)
+                img_p.save("temp_inv.jpg")
+                pdf.image("temp_inv.jpg", x=10, y=10, w=190)
                 
-                # NÚT TẢI EXCEL - Tên file chính là địa chỉ
-                out_ex = BytesIO()
-                df.to_excel(out_ex, index=False)
                 st.download_button(
-                    label=f"📥 TẢI EXCEL: {st.session_state.file_name_cust}.xlsx",
-                    data=out_ex.getvalue(),
-                    file_name=f"{st.session_state.file_name_cust}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    label=f"📥 TẢI FILE PDF: {cust_name}.pdf",
+                    data=pdf.output(dest='S').encode('latin-1'),
+                    file_name=f"{cust_name}.pdf",
+                    mime="application/pdf",
+                    key="btn_pdf"
                 )
 
-    else: # INVOICE
-        inv_name = st.text_input("Gõ địa chỉ khách cho file PDF:", "Invoice_AnTam")
-        inv_img = st.camera_input("CHỤP HÓA ĐƠN")
-        if inv_img:
-            pdf = FPDF(); pdf.add_page()
-            img_p = PIL.Image.open(inv_img); img_p.save("temp.jpg")
-            pdf.image("temp.jpg", x=10, y=10, w=190)
-            st.download_button(f"📥 TẢI PDF {inv_name}", pdf.output(dest='S').encode('latin-1'), f"{inv_name}.pdf")
-else:
-    st.error("Dán API Key vào Secrets nha Jimmy!")
+if __name__ == "__main__":
+    main()
