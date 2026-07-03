@@ -47,27 +47,22 @@ def main():
                     st.info(raw)
 
                     # 🎯 CHIÊU THỨC: BẮT ĐỊA CHỈ LÀM TÊN FILE EXCEL
-                    # Tìm địa chỉ từ kết quả AI (Bắt từ 'ADDRESS:', 'Địa chỉ:', 'Dia chi:')
                     f_name = "Khach_An_Tam"
                     addr_match = re.search(r'(ADDRESS:|Địa chỉ:|Dia chi:)\s*(.*)', raw, re.IGNORECASE)
                     if addr_match:
-                        # Lấy dòng địa chỉ, bỏ ký tự đặc biệt để làm tên file sạch
                         f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","").replace(".","")
                     
                     # 🎯 GIỮ NGUYÊN BỘ QUÉT SỐ ĐA NĂNG (Đọc đủ nhiều cửa)
                     rows = []
                     lines = raw.split('\n')
                     for line in lines:
-                        # Tìm bộ số Ngang x Cao
                         match = re.search(r'(\d{3,4})\s*[xX*/-]\s*(\d{3,4})', line)
                         if match:
                             w = match.group(1)
                             h = match.group(2)
-                            # Bóc vị trí và ghi chú
                             loc_part = line.split(match.group(0))[0].strip().replace("-","").replace(".","")
                             note_part = line.split(match.group(0))[1].strip().replace("(","").replace(")","").replace(" ","")
                             
-                            # Format chuẩn Jimmy: 1525/1458.Lkc
                             jimmy_format = f"{w}/{h}"
                             if note_part:
                                 jimmy_format += f".{note_part}"
@@ -81,7 +76,6 @@ def main():
                         df = pd.DataFrame(rows)
                         st.table(df) 
                         
-                        # XUẤT EXCEL VỚI TÊN FILE LÀ ĐỊA CHỈ
                         out_ex = BytesIO()
                         with pd.ExcelWriter(out_ex, engine='openpyxl') as writer:
                             df.to_excel(writer, index=False)
@@ -89,8 +83,7 @@ def main():
                         st.download_button(
                             label=f"📥 TẢI EXCEL: {f_name}.xlsx",
                             data=out_ex.getvalue(),
-                            file_name=f"{f_name}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            file_name=f"{f_name}.xlsx"
                         )
                     else:
                         st.warning("Không tìm thấy số đo. Ông chụp rõ hơn nhé!")
@@ -98,15 +91,32 @@ def main():
                 except Exception as ex:
                     st.error(f"Lỗi: {ex}")
 
-    else: # PHẦN INVOICE PDF (GIỮ NGUYÊN)
-        st.subheader("🧾 CHỤP INVOICE (Xuất PDF)")
-        pdf_n = st.text_input("Ghi địa chỉ/tên khách:", "Invoice_AnTam")
+    else: # PHẦN INVOICE PDF (CHỈ THÊM QUÉT TÊN CÔNG TY)
+        st.subheader("🧾 CHỤP INVOICE (Chuyển sang PDF)")
         inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="cam_inv")
         if inv_img:
-            pdf = FPDF(); pdf.add_page()
-            img_p = PIL.Image.open(inv_img); img_p.save("temp.jpg")
-            pdf.image("temp.jpg", x=10, y=10, w=190)
-            st.download_button(f"📥 TẢI PDF: {pdf_n}.pdf", pdf.output(dest='S').encode('latin-1'), f"{pdf_n}.pdf")
+            with st.spinner('Đang nhận diện Nhà cung cấp...'):
+                try:
+                    img_p = PIL.Image.open(inv_img)
+                    # 🎯 ĐOẠN THÊM VÀO: AI QUÉT TÊN CÔNG TY ĐẶT TÊN FILE
+                    res_inv = model.generate_content(["Find the firm or company name on this invoice. Just the name, be brief.", img_p])
+                    supplier = res_inv.text.strip().replace(" ","_").replace(".","").split('\n')[0]
+                    if not supplier or len(supplier) > 30: 
+                        supplier = "Invoice_AnTam"
+
+                    st.success(f"✅ Nhà cung cấp: {supplier}")
+
+                    pdf = FPDF(); pdf.add_page()
+                    img_p.save("temp.jpg")
+                    pdf.image("temp.jpg", x=10, y=10, w=190)
+                    
+                    st.download_button(
+                        label=f"📥 TẢI PDF: {supplier}.pdf",
+                        data=pdf.output(dest='S').encode('latin-1'),
+                        file_name=f"{supplier}.pdf"
+                    )
+                except Exception as e_pdf:
+                    st.error(f"Lỗi PDF: {e_pdf}")
 
 if __name__ == "__main__":
     main()
