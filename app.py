@@ -7,17 +7,17 @@ from fpdf import FPDF
 import re
 
 # 1. CẤU HÌNH HUB
-st.set_page_config(page_title="An Tam Blinds Formater", layout="wide")
-st.header("🏠 AN TAM BLINDS - QUOTE FORMATER")
+st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
+st.header("🏠 AN TAM BLINDS - CÔNG CỤ HOÀN THIỆN")
 
 api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
 
 def main():
     if not api_key:
-        st.error("Jimmy ơi, dán API Key vào Secrets nhé!")
+        st.error("Jimmy ơi, dán API Key vào Secrets nha!")
         return
 
-    # TỰ DÒ MODEL ĐỂ KHÔNG LỖI 404
+    # TỰ DÒ MODEL AI
     try:
         genai.configure(api_key=api_key)
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
@@ -27,83 +27,84 @@ def main():
         st.error(f"Lỗi AI: {e}")
         return
 
-    st.sidebar.title("MENU")
+    st.sidebar.title("DANH MỤC")
     task = st.sidebar.radio("CHỌN VIỆC:", ["📝 Ghi Sổ Đo -> Excel", "🧾 Lưu Invoice -> PDF"])
 
     if task == "📝 Ghi Sổ Đo -> Excel":
-        st.subheader("📝 CHỤP SỔ ĐO (Format: Width/Height.Notes)")
+        st.subheader("📝 CHỤP SỔ ĐO (Đọc tất cả các cửa - Xuất Excel)")
         img_file = st.camera_input("CHỤP TỜ GIẤY ĐO", key="cam_sodo")
         
         if img_file:
-            with st.spinner('Đang đọc số...'):
+            with st.spinner('Đang bóc tách toàn bộ sổ đo...'):
                 try:
                     img = PIL.Image.open(img_file)
-                    # Prompt ép AI lấy đúng các thành phần
-                    prompt = """Identify the address and measurements. 
-                    For each dimension, extract: Location, Width, Height, and trailing notes.
-                    Format exactly: ADDRESS: [addr] DATA: [Location | Width | Height | Notes]"""
-                    
+                    # Prompt đơn giản để AI không bị rối, đọc hết mọi thứ nó thấy
+                    prompt = "Identify the job address and EVERYTHING on this paper. For each line with numbers like '1234 x 5678', capture the location text before it and any notes like (L) kc after it."
                     res = model.generate_content([prompt, img])
                     raw = res.text
                     
                     st.success("✅ ĐÃ ĐỌC XONG!")
+                    st.info(raw) # Để Jimmy coi AI nó đọc thô ra cái gì
 
-                    # 🎯 TÌM ĐỊA CHỈ LÀM TÊN FILE
-                    f_name = "Khach_An_Tam"
-                    addr_match = re.search(r'ADDRESS:\s*(.*)', raw, re.IGNORECASE)
+                    # 🎯 TÌM ĐỊA CHỈ ĐỂ ĐẶT TÊN FILE
+                    f_name = "Khach_Hang_An_Tam"
+                    addr_match = re.search(r'(Address|Địa chỉ|Dia chi):\s*(.*)', raw, re.IGNORECASE)
                     if addr_match:
-                        f_name = addr_match.group(1).split('\n')[0].strip().replace(" ","_").replace(",","")
+                        f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","")
                     
-                    # 🎯 XỬ LÝ DỮ LIỆU THEO PHONG CÁCH JIMMY
+                    # 🎯 BỘ QUÉT SỐ "SIÊU ĐA NĂNG" - QUÉT HẾT MỌI DÒNG CÓ SỐ
                     rows = []
-                    matches = re.findall(r'([^|\n]+?)\s*[|]\s*(\d{3,4})\s*[|/xX*]\s*(\d{3,4})\s*[|]?\s*([^|\n]*)', raw)
-                    
-                    for m in matches:
-                        loc = m[0].strip().replace("DATA:", "").strip()
-                        w = m[1]
-                        h = m[2]
-                        # 💥 LÀM SẠCH GHI CHÚ: Bỏ ngoặc, bỏ khoảng trắng để gom cụm (L) kc -> Lkc
-                        notes = m[3].strip().replace("(", "").replace(")", "").replace(" ", "")
-                        
-                        # TẠO FILE FORMAT: 1525/1458.Lkc
-                        jimmy_format = f"{w}/{h}"
-                        if notes:
-                            jimmy_format += f".{notes}"
-                        
-                        rows.append({
-                            "Vị trí": loc,
-                            "Quote Format (Copy)": jimmy_format
-                        })
+                    lines = raw.split('\n')
+                    for line in lines:
+                        # Tìm bộ số Ngang x Cao (3-4 chữ số)
+                        match = re.search(r'(\d{3,4})\s*[xX*/-]\s*(\d{3,4})', line)
+                        if match:
+                            w = match.group(1)
+                            h = match.group(2)
+                            
+                            # Lấy chữ đằng trước làm Vị trí
+                            loc_part = line.split(match.group(0))[0].strip().replace("-","").replace(".","")
+                            # Lấy chữ đằng sau làm Ghi chú (L, R, kc...)
+                            note_part = line.split(match.group(0))[1].strip().replace("(","").replace(")","").replace(" ","")
+                            
+                            # ĐỊNH DẠNG CHUẨN JIMMY: 1525/1458.Lkc
+                            jimmy_format = f"{w}/{h}"
+                            if note_part:
+                                jimmy_format += f".{note_part}"
+                            
+                            rows.append({
+                                "Vị trí": loc_part if loc_part else "Cửa chính",
+                                "Kích thước (Copy)": jimmy_format
+                            })
                     
                     if rows:
                         df = pd.DataFrame(rows)
-                        st.table(df) # Hiện bảng 
+                        st.table(df) # Hiện bảng đầy đủ các cửa
                         
-                        # XUẤT EXCEL
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        out_ex = BytesIO()
+                        with pd.ExcelWriter(out_ex, engine='openpyxl') as writer:
                             df.to_excel(writer, index=False)
                         
                         st.download_button(
                             label=f"📥 TẢI EXCEL: {f_name}.xlsx",
-                            data=output.getvalue(),
+                            data=out_ex.getvalue(),
                             file_name=f"{f_name}.xlsx"
                         )
                     else:
-                        st.warning("Không tách được số. Ông chụp gần và rõ hơn tí nhé!")
-                        st.info(raw)
+                        st.warning("AI thấy hình nhưng không lọc được số đo. Ông thử chụp gần lại nhé!")
+
                 except Exception as ex:
                     st.error(f"Lỗi: {ex}")
 
-    else: # INVOICE
+    else: # PHẦN INVOICE PDF
         st.subheader("🧾 CHỤP INVOICE (Xuất PDF)")
-        pdf_n = st.text_input("Ghi tên khách/Địa chỉ:", "Invoice_AnTam")
+        pdf_n = st.text_input("Ghi địa chỉ/tên khách:", "Invoice_AnTam")
         inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="cam_inv")
         if inv_img:
             pdf = FPDF(); pdf.add_page()
             img_p = PIL.Image.open(inv_img); img_p.save("temp.jpg")
             pdf.image("temp.jpg", x=10, y=10, w=190)
-            st.download_button(f"📥 TẢI PDF: {pdf_n}", pdf.output(dest='S').encode('latin-1'), f"{pdf_n}.pdf")
+            st.download_button(f"📥 TẢI PDF: {pdf_n}.pdf", pdf.output(dest='S').encode('latin-1'), f"{pdf_n}.pdf")
 
 if __name__ == "__main__":
     main()
