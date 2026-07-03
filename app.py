@@ -6,9 +6,9 @@ from io import BytesIO
 from fpdf import FPDF
 import re
 
-# 1. CẤU HÌNH GIAO DIỆN
-st.set_page_config(page_title="An Tam Blinds Master", layout="wide")
-st.header("🏠 AN TAM BLINDS - HỆ THỐNG QUẢN LÝ")
+# 1. CẤU HÌNH HUB
+st.set_page_config(page_title="An Tam Blinds Pro", layout="wide")
+st.header("🏠 AN TAM BLINDS - CÔNG CỤ HOÀN THIỆN")
 
 api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
 
@@ -17,99 +17,96 @@ def main():
         st.error("Jimmy ơi, dán API Key vào Secrets nha!")
         return
 
-    # TỰ DÒ AI (Váy lỗi 404)
+    # TỰ DÒ MODEL AI
     try:
         genai.configure(api_key=api_key)
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_id = next((m for m in models if 'flash' in m.lower()), models[0])
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        model_id = next((m for m in available_models if 'flash' in m.lower()), available_models[0])
         model = genai.GenerativeModel(model_id)
     except Exception as e:
         st.error(f"Lỗi AI: {e}")
         return
 
     st.sidebar.title("DANH MỤC")
-    task = st.sidebar.radio("CHỌN VIỆC:", ["📝 Ghi Số Đo -> Excel", "🧾 Lưu Invoice -> PDF"])
+    task = st.sidebar.radio("CHỌN VIỆC:", ["📝 Ghi Sổ Đo -> Excel", "🧾 Lưu Invoice -> PDF"])
 
-    # --- PHẦN 1: GHI SỔ ĐO (TRẢ LẠI BẢNG EXCEL ÔNG THÍCH) ---
     if task == "📝 Ghi Sổ Đo -> Excel":
-        st.subheader("📝 CHỤP SỔ ĐO (Tự động tính Diện tích & Đặt tên Địa chỉ)")
-        img_sodo = st.camera_input("CHỤP TỜ GIẤY ĐO", key="camera_sodo_unique")
+        st.subheader("📝 CHỤP SỔ ĐO (Đọc tất cả các cửa - Xuất Excel)")
+        img_file = st.camera_input("CHỤP TỜ GIẤY ĐO", key="cam_sodo")
         
-        if img_sodo:
-            with st.spinner('Đang bóc tách số liệu...'):
+        if img_file:
+            with st.spinner('Đang bóc tách số liệu và tìm địa chỉ...'):
                 try:
-                    img = PIL.Image.open(img_sodo)
-                    prompt = "Identify address and measurements. Return exactly: ADDRESS: [addr] DATA: [Location | Width | Height | Notes]"
+                    img = PIL.Image.open(img_file)
+                    # Prompt ép AI tìm Địa chỉ trước để làm tên file
+                    prompt = "Identify the job address and EVERY measurement. Format: ADDRESS: [addr] then list each door with its Width x Height and notes."
                     res = model.generate_content([prompt, img])
                     raw = res.text
                     
-                    # 🎯 BẮT ĐỊA CHỈ LÀM TÊN FILE
-                    f_name = "Khach_An_Tam"
-                    addr_match = re.search(r'(Address:|Địa chỉ:|Dia chi:|ADDRESS:)\s*(.*)', raw, re.IGNORECASE)
-                    if addr_match:
-                        f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","")
+                    st.success("✅ ĐÃ ĐỌC XONG!")
+                    st.info(raw)
 
+                    # 🎯 CHIÊU THỨC: BẮT ĐỊA CHỈ LÀM TÊN FILE EXCEL
+                    # Tìm địa chỉ từ kết quả AI (Bắt từ 'ADDRESS:', 'Địa chỉ:', 'Dia chi:')
+                    f_name = "Khach_An_Tam"
+                    addr_match = re.search(r'(ADDRESS:|Địa chỉ:|Dia chi:)\s*(.*)', raw, re.IGNORECASE)
+                    if addr_match:
+                        # Lấy dòng địa chỉ, bỏ ký tự đặc biệt để làm tên file sạch
+                        f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","").replace(".","")
+                    
+                    # 🎯 GIỮ NGUYÊN BỘ QUÉT SỐ ĐA NĂNG (Đọc đủ nhiều cửa)
                     rows = []
                     lines = raw.split('\n')
-                    don_gia = 100 # Ông có thể sửa đơn giá này
-
                     for line in lines:
+                        # Tìm bộ số Ngang x Cao
                         match = re.search(r'(\d{3,4})\s*[xX*/-]\s*(\d{3,4})', line)
                         if match:
-                            w = int(match.group(1)); h = int(match.group(2))
-                            loc = line.split(match.group(0))[0].strip().replace("-","").replace(".","")
-                            notes = line.split(match.group(0))[1].strip().replace("(","").replace(")","").replace(" ","")
+                            w = match.group(1)
+                            h = match.group(2)
+                            # Bóc vị trí và ghi chú
+                            loc_part = line.split(match.group(0))[0].strip().replace("-","").replace(".","")
+                            note_part = line.split(match.group(0))[1].strip().replace("(","").replace(")","").replace(" ","")
                             
-                            # TÍNH TOÁN (Giống cái bảng ông gửi mẫu)
-                            dt_thuc = round((w/1000)*(h/1000), 2)
-                            dt_tinh = max(dt_thuc, 1.5) # Quy tắc Min 1.5m2
-                            total = round(dt_tinh * don_gia, 2)
+                            # Format chuẩn Jimmy: 1525/1458.Lkc
+                            jimmy_format = f"{w}/{h}"
+                            if note_part:
+                                jimmy_format += f".{note_part}"
                             
                             rows.append({
-                                "Vị trí": loc if loc else "Cửa",
-                                "Rộng (mm)": w,
-                                "Cao (mm)": h,
-                                "Kích thước gốc": f"{w}/{h}.{notes}",
-                                "Diện tích thực": dt_thuc,
-                                "Diện tích tính tiền": dt_tinh,
-                                "Đơn giá": don_gia,
-                                "Thành tiền": total,
-                                "Ghi chú": notes
+                                "Vị trí": loc_part if loc_part else "Cửa",
+                                "Kích thước (Copy)": jimmy_format
                             })
                     
                     if rows:
                         df = pd.DataFrame(rows)
-                        st.table(df) # Hiện bảng chuẩn như ông muốn
+                        st.table(df) 
                         
+                        # XUẤT EXCEL VỚI TÊN FILE LÀ ĐỊA CHỈ
                         out_ex = BytesIO()
                         with pd.ExcelWriter(out_ex, engine='openpyxl') as writer:
                             df.to_excel(writer, index=False)
-                        st.download_button(f"📥 TẢI EXCEL: {f_name}.xlsx", out_ex.getvalue(), f"{f_name}.xlsx")
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
+                        
+                        st.download_button(
+                            label=f"📥 TẢI EXCEL: {f_name}.xlsx",
+                            data=out_ex.getvalue(),
+                            file_name=f"{f_name}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.warning("Không tìm thấy số đo. Ông chụp rõ hơn nhé!")
 
-    # --- PHẦN 2: LƯU INVOICE ---
-    else:
-        st.subheader("🧾 CHỤP HÓA ĐƠN/BIÊN LAI (Xuất PDF)")
-        inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="camera_inv_unique")
-        
+                except Exception as ex:
+                    st.error(f"Lỗi: {ex}")
+
+    else: # PHẦN INVOICE PDF (GIỮ NGUYÊN)
+        st.subheader("🧾 CHỤP INVOICE (Xuất PDF)")
+        pdf_n = st.text_input("Ghi địa chỉ/tên khách:", "Invoice_AnTam")
+        inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="cam_inv")
         if inv_img:
-            with st.spinner('Đang phân tích nhà cung cấp...'):
-                try:
-                    img = PIL.Image.open(inv_img)
-                    # AI quét tên công ty để đặt tên file PDF
-                    res_inv = model.generate_content(["Find the Supplier or Company Name on this invoice only. Be extremely brief.", img])
-                    supplier = res_inv.text.strip().replace(" ","_").replace(".","")
-                    if not supplier or len(supplier) > 30: supplier = "Invoice_AnTam"
-                    
-                    st.success(f"✅ Nhà cung cấp: {supplier}")
-                    # TẠO PDF
-                    pdf = FPDF(); pdf.add_page()
-                    img.save("temp_inv.jpg")
-                    pdf.image("temp_inv.jpg", x=10, y=10, w=190)
-                    st.download_button(f"📥 TẢI PDF: {supplier}.pdf", pdf.output(dest='S').encode('latin-1'), f"{supplier}.pdf")
-                except Exception as e_pdf:
-                    st.error(f"Lỗi PDF: {e_pdf}")
+            pdf = FPDF(); pdf.add_page()
+            img_p = PIL.Image.open(inv_img); img_p.save("temp.jpg")
+            pdf.image("temp.jpg", x=10, y=10, w=190)
+            st.download_button(f"📥 TẢI PDF: {pdf_n}.pdf", pdf.output(dest='S').encode('latin-1'), f"{pdf_n}.pdf")
 
 if __name__ == "__main__":
     main()
