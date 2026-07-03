@@ -1,0 +1,116 @@
+import streamlit as st
+from google.cloud import vision
+from google.oauth2 import service_account
+import io
+from PIL import Image
+import pandas as pd
+import re
+
+# --- CẤU HÌNH GOOGLE CLOUD VISION ---
+# LƯU Ý: Khi chạy cục bộ, bạn có thể truyền đường dẫn tệp JSON.
+# Nhưng khi deploy, chúng ta sẽ sử dụng secrets.
+def get_vision_client():
+    try:
+        # Khi deploy trên Streamlit Cloud
+        credentials_info = st.secrets["GOOGLE_APPLICATION_CREDENTIALS"]
+        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        client = vision.ImageAnnotatorClient(credentials=credentials)
+        return client
+    except Exception:
+        # Khi chạy cục bộ (phải tạo tệp json locally)
+        # st.error("Lỗi cấu hình API. Hãy chắc chắn bạn đã thiết lập secrets.")
+        return None
+
+client = get_vision_client()
+
+# --- HÀM XỬ LÝ OCR ---
+def detect_handwritten_text(image_bytes):
+    """Nhận diện chữ viết tay sử dụng Google Cloud Vision."""
+    if client is None: return "Cấu hình API chưa hoàn tất."
+    image = vision.Image(content=image_bytes)
+    response = client.text_detection(image=image)
+    texts = response.text_annotations
+    if texts:
+        return texts[0].description
+    return ""
+
+# --- HÀM PHÂN TÍCH VĂN BẢN THÀNH BẢNG (CRITICAL PART - TÙY CHỈNH TẠI ĐÂY) ---
+def process_ocr_to_table(ocr_text):
+    """Chuyển đổi văn bản OCR thành DataFrame (Bảng dữ liệu)."""
+    lines = ocr_text.strip().split('\n')
+    data = []
+    for line in lines:
+        # Ví dụ: Giả sử mỗi dòng có cấu trúc "Ngày - Tên - Số đo 1 - Số đo 2"
+        # Hoặc phân tách bằng dấu cách/tab.
+        # Dưới đây là một ví dụ phân tách đơn giản bằng dấu cách hoặc tab.
+
+        # Làm sạch dòng và phân tách
+        parts = re.split(r'\s{2,}|\t|\s-', line.strip()) # Phân tách khi có >=2 dấu cách, tab, hoặc " -"
+
+        # Chỉ lấy các dòng có ít nhất 2 cột dữ liệu
+        if len(parts) >= 2:
+            data.append(parts)
+
+    if not data: return None
+
+    # Tạo DataFrame, giả định 4 cột đầu tiên là Ngày, Tên, Số đo 1, Số đo 2.
+    df = pd.DataFrame(data)
+
+    # Tùy chỉnh tên cột (có thể linh hoạt)
+    if len(df.columns) == 4:
+        df.columns = ["Ngày", "Tên", "Số đo 1", "Số đo 2"]
+    elif len(df.columns) == 3:
+        df.columns = ["Ngày", "Tên", "Số đo"]
+    # Thêm các trường hợp khác nếu cần.
+
+    return df
+
+# --- GIAO DIỆN STREAMLIT ---
+st.set_page_config(page_title="Quét Sổ Ghi Tay", page_icon="📝")
+st.title("Chuyển Đổi Sổ Ghi Tay Sang Excel")
+st.markdown("Chụp ảnh trang sổ ghi tay và ứng dụng sẽ tự động phân tích.")
+
+# Tải ảnh lên
+uploaded_file = st.file_uploader("Chọn hoặc chụp ảnh trang sổ...", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Ảnh đã tải lên.", use_column_width=True)
+
+    # Đọc byte của ảnh
+    img_bytes = io.BytesIO()
+    image.save(img_bytes, format=image.format)
+    img_bytes = img_bytes.getvalue()
+
+    # Nút Bắt đầu
+    if st.button("Bắt đầu phân tích"):
+        with st.spinner("Đang nhận diện chữ viết tay..."):
+            ocr_result = detect_handwritten_text(img_bytes)
+
+            if not ocr_result or ocr_result.startswith("Cấu hình API"):
+                st.error(f"Lỗi: {ocr_result}")
+            else:
+                st.subheader("Văn bản nhận diện được:")
+                st.text_area("Văn bản gốc:", ocr_result, height=200)
+
+                with st.spinner("Đang chuyển đổi thành bảng dữ liệu..."):
+                    df = process_ocr_to_table(ocr_result)
+
+                    if df is not None:
+                        st.subheader("Bảng Dữ Liệu Phân Tích:")
+                        st.dataframe(df)
+
+                        # Nút Tải về Excel
+                        # Chuyển đổi DataFrame sang Excel
+                        towrite = io.BytesIO()
+                        with pd.ExcelWriter(towrite, engine='xlsxwriter') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Sheet1')
+
+                        st.download_button(
+                            label="Tải về tệp Excel (.xlsx)",
+                            data=towrite.getvalue(),
+                            file_name='du_lieu_so_ghi_tay.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                        )
+                    else:
+                        st.warning("Không thể phân tích văn bản thành cấu trúc bảng.")
