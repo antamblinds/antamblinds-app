@@ -35,52 +35,53 @@ def main():
         img_file = st.camera_input("CHỤP TỜ GIẤY ĐO", key="cam_sodo")
         
         if img_file:
-            with st.spinner('Đang bóc tách toàn bộ sổ đo...'):
+            with st.spinner('Đang bóc tách số liệu và tìm địa chỉ...'):
                 try:
                     img = PIL.Image.open(img_file)
-                    # Prompt đơn giản để AI không bị rối, đọc hết mọi thứ nó thấy
-                    prompt = "Identify the job address and EVERYTHING on this paper. For each line with numbers like '1234 x 5678', capture the location text before it and any notes like (L) kc after it."
+                    # Prompt ép AI tìm Địa chỉ trước để làm tên file
+                    prompt = "Identify the job address and EVERY measurement. Format: ADDRESS: [addr] then list each door with its Width x Height and notes."
                     res = model.generate_content([prompt, img])
                     raw = res.text
                     
                     st.success("✅ ĐÃ ĐỌC XONG!")
-                    st.info(raw) # Để Jimmy coi AI nó đọc thô ra cái gì
+                    st.info(raw)
 
-                    # 🎯 TÌM ĐỊA CHỈ ĐỂ ĐẶT TÊN FILE
-                    f_name = "Khach_Hang_An_Tam"
-                    addr_match = re.search(r'(Address|Địa chỉ|Dia chi):\s*(.*)', raw, re.IGNORECASE)
+                    # 🎯 CHIÊU THỨC: BẮT ĐỊA CHỈ LÀM TÊN FILE EXCEL
+                    # Tìm địa chỉ từ kết quả AI (Bắt từ 'ADDRESS:', 'Địa chỉ:', 'Dia chi:')
+                    f_name = "Khach_An_Tam"
+                    addr_match = re.search(r'(ADDRESS:|Địa chỉ:|Dia chi:)\s*(.*)', raw, re.IGNORECASE)
                     if addr_match:
-                        f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","")
+                        # Lấy dòng địa chỉ, bỏ ký tự đặc biệt để làm tên file sạch
+                        f_name = addr_match.group(2).split('\n')[0].strip().replace(" ","_").replace(",","").replace(".","")
                     
-                    # 🎯 BỘ QUÉT SỐ "SIÊU ĐA NĂNG" - QUÉT HẾT MỌI DÒNG CÓ SỐ
+                    # 🎯 GIỮ NGUYÊN BỘ QUÉT SỐ ĐA NĂNG (Đọc đủ nhiều cửa)
                     rows = []
                     lines = raw.split('\n')
                     for line in lines:
-                        # Tìm bộ số Ngang x Cao (3-4 chữ số)
+                        # Tìm bộ số Ngang x Cao
                         match = re.search(r'(\d{3,4})\s*[xX*/-]\s*(\d{3,4})', line)
                         if match:
                             w = match.group(1)
                             h = match.group(2)
-                            
-                            # Lấy chữ đằng trước làm Vị trí
+                            # Bóc vị trí và ghi chú
                             loc_part = line.split(match.group(0))[0].strip().replace("-","").replace(".","")
-                            # Lấy chữ đằng sau làm Ghi chú (L, R, kc...)
                             note_part = line.split(match.group(0))[1].strip().replace("(","").replace(")","").replace(" ","")
                             
-                            # ĐỊNH DẠNG CHUẨN JIMMY: 1525/1458.Lkc
+                            # Format chuẩn Jimmy: 1525/1458.Lkc
                             jimmy_format = f"{w}/{h}"
                             if note_part:
                                 jimmy_format += f".{note_part}"
                             
                             rows.append({
-                                "Vị trí": loc_part if loc_part else "Cửa chính",
+                                "Vị trí": loc_part if loc_part else "Cửa",
                                 "Kích thước (Copy)": jimmy_format
                             })
                     
                     if rows:
                         df = pd.DataFrame(rows)
-                        st.table(df) # Hiện bảng đầy đủ các cửa
+                        st.table(df) 
                         
+                        # XUẤT EXCEL VỚI TÊN FILE LÀ ĐỊA CHỈ
                         out_ex = BytesIO()
                         with pd.ExcelWriter(out_ex, engine='openpyxl') as writer:
                             df.to_excel(writer, index=False)
@@ -88,15 +89,16 @@ def main():
                         st.download_button(
                             label=f"📥 TẢI EXCEL: {f_name}.xlsx",
                             data=out_ex.getvalue(),
-                            file_name=f"{f_name}.xlsx"
+                            file_name=f"{f_name}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                     else:
-                        st.warning("AI thấy hình nhưng không lọc được số đo. Ông thử chụp gần lại nhé!")
+                        st.warning("Không tìm thấy số đo. Ông chụp rõ hơn nhé!")
 
                 except Exception as ex:
                     st.error(f"Lỗi: {ex}")
 
-    else: # PHẦN INVOICE PDF
+    else: # PHẦN INVOICE PDF (GIỮ NGUYÊN)
         st.subheader("🧾 CHỤP INVOICE (Xuất PDF)")
         pdf_n = st.text_input("Ghi địa chỉ/tên khách:", "Invoice_AnTam")
         inv_img = st.camera_input("CHỤP HÓA ĐƠN", key="cam_inv")
